@@ -1,0 +1,7 @@
+chainlit
+python-dotenv
+azure-ai-projects
+azure-identity
+pydantic
+openai-agents
+openai
