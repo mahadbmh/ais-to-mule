@@ -1,3 +1,4 @@
+
 from __future__ import annotations as _annotations
 import os
 import time
@@ -12,6 +13,8 @@ from azure.identity import DefaultAzureCredential
 from openai.types.responses import ResponseTextDeltaEvent
 from openai import AsyncAzureOpenAI
 
+from azure.search.documents.aio import SearchClient
+from azure.core.credentials import AzureKeyCredential
 
 from agents import (
     Agent,
@@ -31,8 +34,21 @@ logger.setLevel(logging.WARNING)
 set_tracing_disabled(True)
 
 AIPROJECT_CONNECTION_STRING = os.getenv("AIPROJECT_CONNECTION_STRING")
-DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+AZURE_OPENAI_GPT4= os.getenv("AZURE_OPENAI_GPT4")
+AZURE_OPENAI_GPT35= os.getenv("AZURE_OPENAI_GPT35")
+
 FAQ_AGENT_ID = os.getenv("FAQ_AGENT_ID")
+
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT") 
+AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY")
+AZURE_SEARCH_INDEX_NAME=  os.getenv("AZURE_SEARCH_INDEX_NAME")
+
+search_client = SearchClient(
+    endpoint=AZURE_SEARCH_ENDPOINT,
+    index_name=AZURE_SEARCH_INDEX_NAME,
+    credential=AzureKeyCredential(AZURE_SEARCH_KEY)
+)
+
 
 azure_client = AsyncAzureOpenAI(
     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
@@ -80,7 +96,8 @@ Convert each MuleSoft integration flow into a modular Azure Integration Services
  
 - Adding observability design
  
-The expected input represents the functional behavior of a MuleSoft flow. The expected output is a breakdown of the Azure architecture. Use the yaml files in the Input/Output document as a reference for the translation.
+The expected input represents the functional behavior of a MuleSoft flow. The expected output is a breakdown of the Azure architecture. Use the yaml files in Creativity Agent Input_Output Template.docx cls
+as a reference for the translation.
  
 🔹 Processing Rules  
 1. Trigger Mapping
@@ -135,7 +152,7 @@ Additionally, follow these guidelines:
 
 """,
     model=OpenAIChatCompletionsModel(
-        model=DEPLOYMENT_NAME,
+        model=AZURE_OPENAI_GPT4,
         openai_client=azure_client,
     ),
 )
@@ -145,7 +162,7 @@ req_agent = Agent[TelcoAgentContext](
     name="AIS RequirementsAgent",
     handoff_description="An agent for caputring the reuqirements from a MuleSoft integration, and delegate to the creativity agent.",
     instructions=f"""{RECOMMENDED_PROMPT_PREFIX}
-   You are given MuleSoft implementation xml file(s). Given files, generate a table summary for each one using the format from the provided document as a reference and give the following details for each flow:
+   You are given MuleSoft implementation xml file(s). Given files, generate a table summary for each one using the format from Integration Summary.docx  as a reference and give the following details for each flow:
 
 - Incoming payload
 - Transformation/mappings (if any)
@@ -159,7 +176,7 @@ req_agent = Agent[TelcoAgentContext](
 
  """,
     model=OpenAIChatCompletionsModel(
-        model=DEPLOYMENT_NAME,
+        model=AZURE_OPENAI_GPT4,
         openai_client=azure_client,
     ),
     handoffs=[creativity_agent],
@@ -181,11 +198,18 @@ triage_agent = Agent[TelcoAgentContext](
         creativity_agent,
     ],
     model=OpenAIChatCompletionsModel(
-        model=DEPLOYMENT_NAME,
+        model=AZURE_OPENAI_GPT35,
         openai_client=azure_client,
     ),
 )
 
+async def retrieve_documents(query: str, top_k: int = 5) -> list[str]:
+    results = []
+    search_results = await search_client.search(search_text=query, top=top_k)
+    async for result in search_results:
+        content = result.get("content") or result.get("text") or str(result)
+        results.append(content)
+    return results
 
 async def main(user_input: str) -> None:
     current_agent = cl.user_session.get("current_agent")
@@ -202,6 +226,18 @@ async def main(user_input: str) -> None:
     cl.user_session.set("delete_threads", [])
     is_thinking = True
 
+
+    retrieved_docs = await retrieve_documents(user_input)
+    print("Retrieved documents for grounding:")
+    for i, doc in enumerate(retrieved_docs):
+        print(f"Doc {i+1}: {doc[:200]}...") # Log usage of documents 
+
+    # Combine retrieved content with user input for context
+    context_text = "\n\n".join(f"[Doc {i+1}]: {doc}" for i, doc in enumerate(retrieved_docs))
+    augmented_input = f"{context_text}\n\nUser Query: {user_input}"
+
+    input_items.append({"content": augmented_input, "role": "user"})
+    
     try:
         input_items.append({"content": user_input, "role": "user"})
         # Run the agent with streaming
