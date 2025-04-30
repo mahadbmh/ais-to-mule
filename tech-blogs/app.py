@@ -1,4 +1,3 @@
-
 from __future__ import annotations as _annotations
 import os
 import time
@@ -34,19 +33,19 @@ logger.setLevel(logging.WARNING)
 set_tracing_disabled(True)
 
 AIPROJECT_CONNECTION_STRING = os.getenv("AIPROJECT_CONNECTION_STRING")
-AZURE_OPENAI_GPT4= os.getenv("AZURE_OPENAI_GPT4")
-AZURE_OPENAI_GPT35= os.getenv("AZURE_OPENAI_GPT35")
+AZURE_OPENAI_GPT4 = os.getenv("AZURE_OPENAI_GPT4")
+AZURE_OPENAI_GPT35 = os.getenv("AZURE_OPENAI_GPT35")
 
 FAQ_AGENT_ID = os.getenv("FAQ_AGENT_ID")
 
-AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT") 
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
 AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY")
-AZURE_SEARCH_INDEX_NAME=  os.getenv("AZURE_SEARCH_INDEX_NAME")
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
 
 search_client = SearchClient(
     endpoint=AZURE_SEARCH_ENDPOINT,
     index_name=AZURE_SEARCH_INDEX_NAME,
-    credential=AzureKeyCredential(AZURE_SEARCH_KEY)
+    credential=AzureKeyCredential(AZURE_SEARCH_KEY),
 )
 
 
@@ -63,13 +62,12 @@ project_client = AIProjectClient.from_connection_string(
     conn_str=AIPROJECT_CONNECTION_STRING, credential=DefaultAzureCredential()
 )
 
- 
+
 class TelcoAgentContext(BaseModel):
     user_name: str | None = None
     image_path: str | None = None
     birth_date: str | None = None
     user_id: str | None = None
-
 
 
 ### AGENTS
@@ -203,6 +201,7 @@ triage_agent = Agent[TelcoAgentContext](
     ),
 )
 
+
 async def retrieve_documents(query: str, top_k: int = 5) -> list[str]:
     results = []
     search_results = await search_client.search(search_text=query, top=top_k)
@@ -211,13 +210,13 @@ async def retrieve_documents(query: str, top_k: int = 5) -> list[str]:
         results.append(content)
     return results
 
+
 async def main(user_input: str) -> None:
     current_agent = cl.user_session.get("current_agent")
     input_items = cl.user_session.get("input_items")
     context = cl.user_session.get("context")
     print(f"Received message: {user_input}")
 
-    
     # Show thinking message to user
     msg = await cl.Message(f"thinking...", author="agent").send()
     msg_final = cl.Message("", author="agent")
@@ -226,18 +225,19 @@ async def main(user_input: str) -> None:
     cl.user_session.set("delete_threads", [])
     is_thinking = True
 
-
     retrieved_docs = await retrieve_documents(user_input)
     print("Retrieved documents for grounding:")
     for i, doc in enumerate(retrieved_docs):
-        print(f"Doc {i+1}: {doc[:200]}...") # Log usage of documents 
+        print(f"Doc {i + 1}: {doc[:200]}...")  # Log usage of documents
 
     # Combine retrieved content with user input for context
-    context_text = "\n\n".join(f"[Doc {i+1}]: {doc}" for i, doc in enumerate(retrieved_docs))
+    context_text = "\n\n".join(
+        f"[Doc {i + 1}]: {doc}" for i, doc in enumerate(retrieved_docs)
+    )
     augmented_input = f"{context_text}\n\nUser Query: {user_input}"
 
     input_items.append({"content": augmented_input, "role": "user"})
-    
+
     try:
         input_items.append({"content": user_input, "role": "user"})
         # Run the agent with streaming
