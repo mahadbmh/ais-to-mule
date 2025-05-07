@@ -33,8 +33,8 @@ logger.setLevel(logging.WARNING)
 set_tracing_disabled(True)
 
 AIPROJECT_CONNECTION_STRING = os.getenv("AIPROJECT_CONNECTION_STRING")
-AZURE_OPENAI_GPT4 = os.getenv("AZURE_OPENAI_GPT4")
-AZURE_OPENAI_GPT35 = os.getenv("AZURE_OPENAI_GPT35")
+GPT4 = os.getenv("GPT4")
+ 
 
 FAQ_AGENT_ID = os.getenv("FAQ_AGENT_ID")
 
@@ -52,7 +52,7 @@ search_client = SearchClient(
 azure_client = AsyncAzureOpenAI(
     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_key=os.getenv("MY_OPENAI_API_KEY"),
+    api_key=os.getenv("AZURE_OPENAI_KEY"),
 )
 
 set_default_openai_client(azure_client, use_for_tracing=False)
@@ -150,7 +150,7 @@ Additionally, follow these guidelines:
 
 """,
     model=OpenAIChatCompletionsModel(
-        model=AZURE_OPENAI_GPT4,
+        model=GPT4,
         openai_client=azure_client,
     ),
 )
@@ -174,7 +174,7 @@ req_agent = Agent[TelcoAgentContext](
 
  """,
     model=OpenAIChatCompletionsModel(
-        model=AZURE_OPENAI_GPT4,
+        model=GPT4,
         openai_client=azure_client,
     ),
     handoffs=[creativity_agent],
@@ -196,7 +196,7 @@ triage_agent = Agent[TelcoAgentContext](
         creativity_agent,
     ],
     model=OpenAIChatCompletionsModel(
-        model=AZURE_OPENAI_GPT35,
+        model=GPT4,
         openai_client=azure_client,
     ),
 )
