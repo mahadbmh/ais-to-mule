@@ -1,131 +1,126 @@
-from __future__ import annotations as _annotations
+from __future__ import annotations
 import os
 import time
-import logging
 import chainlit as cl
-
 from dotenv import load_dotenv
+
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
- 
-from openai import AsyncAzureOpenAI
 
-from azure.search.documents.aio import SearchClient
-from azure.core.credentials import AzureKeyCredential
-
-from agents import (
-    set_tracing_disabled,
-    set_default_openai_client,
-    set_default_openai_api,
-)
- 
-
+# Load environment variables
 load_dotenv()
-# Disable verbose connection logs
-logger = logging.getLogger("azure.core.pipeline.policies.http_logging_policy")
-logger.setLevel(logging.WARNING)
-set_tracing_disabled(True)
 
+# Azure Foundry setup
 AIPROJECT_CONNECTION_STRING = os.getenv("AIPROJECT_CONNECTION_STRING")
-
- 
-GPT4 = os.getenv("GPT4")
- 
-TRIAGE_AGENT_ID = os.getenv("TRIAGE_AGENT_ID")
-ARCHITECT_AGENT_ID = os.getenv("ARCHITECT_AGENT_ID")
-DEV_AGENT_ID = os.getenv("DEV_AGENT_ID")
-REQ_AGENT_ID = os.getenv("REQ_AGENT_ID")
-FAQ_AGENT_ID = os.getenv("FAQ_AGENT_ID")
-
-
-AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT")
-AZURE_SEARCH_KEY = os.getenv("AZURE_SEARCH_KEY")
-AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME")
-
-search_client = SearchClient(
-    endpoint=AZURE_SEARCH_ENDPOINT,
-    index_name=AZURE_SEARCH_INDEX_NAME,
-    credential=AzureKeyCredential(AZURE_SEARCH_KEY),
-)
-
-
-azure_client = AsyncAzureOpenAI(
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_key=os.getenv("AZURE_OPENAI_KEY"),
-)
-
-set_default_openai_client(azure_client, use_for_tracing=False)
-set_default_openai_api("chat_completions")
-
 project_client = AIProjectClient.from_connection_string(
-    conn_str=AIPROJECT_CONNECTION_STRING, credential=DefaultAzureCredential()
+    conn_str=AIPROJECT_CONNECTION_STRING,
+    credential=DefaultAzureCredential()
 )
 
 
- # Step 2: Define Agent ID
-agent_ids = [REQ_AGENT_ID, ARCHITECT_AGENT_ID, DEV_AGENT_ID]  # Replace with your actual agent ID
-agents = []
 
-# Step 3: Retrieve Agent
-for agent_id in agent_ids:
+# Agent names in Foundry 
+AGENT_NAMES = ["AIS Requirements", "AIS Architect", "AIS Developer"]
+AGENT_LOOKUP = {}
+
+# Utility to retrieve agents by name
+def get_agents_by_name(client, names: list[str]):
+    found_agents = []
     try:
-        agent = project_client.agents.get_agent(agent_id)
-        agents.append(agent)
-        print(f"✅ Agent retrieved: {agent.name}")
+        agents = client.agents.list_agents()
+        for name in names:
+            match = next((a for a in agents.data if a.name == name), None)
+            if match:
+                found_agents.append(match)
+            else:
+                print(f"Agent named '{name}' not found.")
     except Exception as e:
-        print(f"❌ Error retrieving agent: {e}")
+        print(f"Error listing agents: {e}")
+    return found_agents
 
-if not agents:
-    print("❌ No agents retrieved. Exiting.")
-    exit()
+# Routing logic: decide which agent to trigger based on user input
+def detect_target_agent(message: str) -> str | None:
+    message = message.lower()
+    if "requirement" in message:
+        return "AIS Requirements"
+    elif "architecture" in message:
+        return "AIS Architect"
+    elif "project" in message:
+        return "AIS Developer"
+    return None
 
-# Step 4: Create a Communication Thread
-try:
+# Session start: load agents and create a shared thread
+@cl.on_chat_start
+async def setup():
+    global AGENT_LOOKUP
+    agents = get_agents_by_name(project_client, AGENT_NAMES)
+    AGENT_LOOKUP = {a.name: a for a in agents}
+
+    if not AGENT_LOOKUP:
+        await cl.Message("No agents found. Please check your Foundry setup.").send()
+        return
+
     thread = project_client.agents.create_thread()
-except Exception as e:
-    print(f"❌ Error creating thread: {e}")
-    exit()
+    cl.user_session.set("thread", thread)
 
-# Step 5: Send a Message to the Thread
-user_message = "Give requirements for implementation_chatter"
+    await cl.Message("Multi-agent session started. Type a prompt to get started.").send()
 
-try:
-    message = project_client.agents.create_message(
-        thread_id=thread.id,
-        role="user",
-        content=user_message
-    )
-except Exception as e:
-    print(f"❌ Error sending message to thread: {e}")
-    exit()
+# Main handler: user sends a message, we route to an agent
+@cl.on_message
+async def on_message(message: cl.Message):
+    user_input = message.content
+    thread = cl.user_session.get("thread")
 
-# Step 6: Process Agent Runs
-for agent in agents:
+    if not thread:
+        await cl.Message("No active thread.").send()
+        return
+
+    # Determine which agent to use
+    agent_name = detect_target_agent(user_input)
+    agent = AGENT_LOOKUP.get(agent_name) if agent_name else None
+
+    if not agent:
+        await cl.Message(
+            "Could not determine which agent to use. Try including keywords like "
+            "`requirements`, `architecture`, or `project`."
+        ).send()
+        return
+
+    # Append user's message to the thread
+    try:
+        project_client.agents.create_message(
+            thread_id=thread.id,
+            role="user",
+            content=user_input
+        )
+    except Exception as e:
+        await cl.Message(f"Failed to send message to thread: {e}").send()
+        return
+
+    await cl.Message(f"`{agent.name}` is processing...").send()
+
+    # Trigger agent run
     try:
         run = project_client.agents.create_and_process_run(
             thread_id=thread.id,
             agent_id=agent.id
-)
-        
-    except Exception as e:
-        print(f"❌ Error processing run for agent '{agent.name}': {e}")
+        )
+        time.sleep(10)  # For now, fixed wait time (can be improved with polling)
 
-# Step 7: Wait for the Agent to Process
-time.sleep(10)  # Increase delay if needed
-
-# Step 8: Retrieve and Display Messages in Correct Order
-try:
-    messages = project_client.agents.list_messages(thread_id=thread.id)
-
-    if hasattr(messages, "data") and messages.data:
-        # Sort messages by 'created_at' timestamp in ascending order
+        messages = project_client.agents.list_messages(thread_id=thread.id)
         sorted_messages = sorted(messages.data, key=lambda x: x.created_at)
 
-        for msg in sorted_messages:
-            if msg.content and isinstance(msg.content, list):
-                for content_item in msg.content:
-                    if content_item["type"] == "text":
-                        print(f"🤖 {content_item['text']['value']}")
-except Exception as e:
-    print(f"❌ Error retrieving messages: {e}")
+        assistant_msg = next(
+            (m for m in reversed(sorted_messages) if m.role == "assistant"), None
+        )
+
+        if assistant_msg:
+            for item in assistant_msg.content:
+                if item["type"] == "text":
+                    await cl.Message(author=agent.name, content=item["text"]["value"]).send()
+                    return
+
+        await cl.Message("No reply found from the agent.").send()
+
+    except Exception as e:
+        await cl.Message(f"Error running `{agent.name}`: {e}").send()
