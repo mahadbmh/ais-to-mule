@@ -2,31 +2,23 @@ from __future__ import annotations as _annotations
 import os
 import time
 import logging
-import asyncio
 import chainlit as cl
-import random
 
-from functools import wraps
-from pydantic import BaseModel
 from dotenv import load_dotenv
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
-from openai.types.responses import ResponseTextDeltaEvent
+ 
 from openai import AsyncAzureOpenAI
 
 from azure.search.documents.aio import SearchClient
 from azure.core.credentials import AzureKeyCredential
 
 from agents import (
-    Agent,
-    Runner,
-    TResponseInputItem,
-    OpenAIChatCompletionsModel,
     set_tracing_disabled,
     set_default_openai_client,
     set_default_openai_api,
 )
-from agents.extensions.handoff_prompt import RECOMMENDED_PROMPT_PREFIX
+ 
 
 load_dotenv()
 # Disable verbose connection logs
@@ -40,7 +32,7 @@ AIPROJECT_CONNECTION_STRING = os.getenv("AIPROJECT_CONNECTION_STRING")
 GPT4 = os.getenv("GPT4")
  
 TRIAGE_AGENT_ID = os.getenv("TRIAGE_AGENT_ID")
-CREATIVITY_AGENT_ID = os.getenv("CREATIVITY_AGENT_ID")
+ARCHITECT_AGENT_ID = os.getenv("ARCHITECT_AGENT_ID")
 DEV_AGENT_ID = os.getenv("DEV_AGENT_ID")
 REQ_AGENT_ID = os.getenv("REQ_AGENT_ID")
 FAQ_AGENT_ID = os.getenv("FAQ_AGENT_ID")
@@ -72,7 +64,7 @@ project_client = AIProjectClient.from_connection_string(
 
 
  # Step 2: Define Agent ID
-agent_ids = [REQ_AGENT_ID]  # Replace with your actual agent ID
+agent_ids = [REQ_AGENT_ID, ARCHITECT_AGENT_ID, DEV_AGENT_ID]  # Replace with your actual agent ID
 agents = []
 
 # Step 3: Retrieve Agent
